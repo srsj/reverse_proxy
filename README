@@ -1,24 +1,56 @@
-My logrotate file (/etc/logrotate.d/nginx) for my service looks like this:
+aws-cli command line should be installed in the docker image for this
+to work!
+
+#### My logrotate file (/etc/logrotate.d/nginx) for my service looks like this:
 
 
 /var/log/nginx/*.log {
-  daily
   missingok
-  copytruncate
-  rotate 10
+  rotate 14
+  size 100k
   compress
   delaycompress
   notifempty
+  create 0640 www-data adm
   sharedscripts
+  prerotate
+		  if [ -d /etc/logrotate.d/httpd-prerotate ]; then \
+			      run-parts /etc/logrotate.d/httpd-prerotate; \
+		  fi \
+  endscript
   postrotate
-    /bin/bash /home/ubuntu/meli_challenge/app/utils/sync_rotated_file_to_s3.sh log.1
+          invoke-rc.d nginx rotate >/dev/null 2>&1
+          /bin/bash /home/ubuntu/reverse_proxy/app/utils/sync_rotated_file_to_s3.sh log.1
   endscript
 }
 
-The upstart job config file (/etc/init/shutdown-hook.conf) should look something like this:
+#### The upstart job config file (/etc/init/shutdown-hook.conf) should look something like this:
+
 
 description "run at shutdown"
 
 start on starting rc
 task
-exec /bin/bash /home/ubuntu/meli_challenge/app/utils/sync_rotated_file_to_s3.sh log
+exec /bin/bash /home/ubuntu/reverse_proxy/app/utils/sync_rotated_file_to_s3.sh log
+
+
+
+#### nginx config file must say in http { block }
+
+
+    http {
+        log_format custom    '$remote_addr-+-$status-+-[$time_iso8601]'
+                               '-+-"$request"-+-$request_length-+-$request_time'
+                               '-+-"$http_referer"-+-"$server_addr";
+
+        server {
+            access_log /var/log/nginx/access.log custom;
+            error_log /var/log/nginx/error.log;
+            ...
+        }
+    }
+
+Example from access.log:
+2018-02-17T06:30:19+01:00: 46.229.164.98 - (przemoc.net) przemoc.net "GET /robots.txt HTTP/1.1" 404 162 [0.090] "-" "Mozilla/5.0 (compatible; SemrushBot/1.2~bl; +http://www.semrush.com/bot.html)" "-"
+
+

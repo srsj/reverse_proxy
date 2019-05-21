@@ -1,100 +1,46 @@
 # Native Imports
-from functools import wraps
 import requests
 from threading import Thread
 
 # Dependencies Imports
+from flask_restful import Api
 from flask import Flask, Response, request, jsonify
-# TODO: 1)study performance with redirect(url_for('hello_guest',guest = name)) & from flask import Flask, redirect, url_for
+import pandas as pd
 
-from flask_limiter import Limiter
-from flask_limiter.util import get_remote_address
+# online resource access permission
+from flask_cors import CORS
 
 # Module Imports
-from app.limiter.limiter_handler import is_request_forbidden, _counter_increment
+from app.utils.limiter_handler import is_request_forbidden, _counter_increment, Filter, security_wrapper
 
 _DEFAULT_LIMIT_TO_ALL_URLS = 10  # 60000 rpm (1000 req x s)
 _DEFAULT_LIMIT_TO_ALL_IP = 3  # 600 rpm (10 req x s)
 
+excpetions_log_path = '/home/ssanchez/Documents/temp/api_exceptions.log'
+# excpetions_log_path = '/home/ubuntu/log_api.log'
 
 # PROXIED_ROUTE
-# _route = 'api-dev.XXXX/hello_world'
 _route = '​api.mercadolibre.com/'
 
 # Instantiate the app
 app = Flask(__name__)
-# If nginx or uwsgi is having problems with https redirection: --->
-# app.config.update(dict(
-#   PREFERRED_URL_SCHEME = 'https'
-# ))
+# default CORS config, which allows requests from all origins (doesn't filter anything)
+CORS(app)
+api = Api(app)
 
-# Get cached configuration for limiter
-# limits_cached_dict = CachedLimits().limits
-#
-# ####################################### # Instantiate Limiter class for IP throttling. Default rpm limit for all IPs
-# ####################################### ip_limiter = Limiter(
-# #######################################     app,
-# #######################################     key_func=get_remote_address,
-# #######################################     default_limits=limits_cached_dict['ip']['default_values']
-# ####################################### )
-# #######################################
-# ####################################### ip_limiter.init_app(app)
-# #######################################
-# #######################################
-# ####################################### # Create key_function for throttling URL addresses obtained from cached config
-# ####################################### def url_filter_key_function():
-# #######################################     return request.url
-# #######################################
-# #######################################
-# ####################################### # Instantiate Limiter class route (url) throttling to ALL ip's
-# ####################################### all_path_limiter = Limiter(
-# #######################################     app,
-# #######################################     key_func=url_filter_key_function,
-# #######################################     default_limits=limits_cached_dict['path']['default_values']
-# ####################################### )
-# #######################################
-# ####################################### all_path_limiter.init_app(app)
 
-#
-# # Decorators for proxy method
-# def ip_filter_decorator(f):
-#     @wraps(f)
-#     def ipfilter(*args, **kwargs):
-#         print('SEBA2', get_remote_address())
-#         if get_remote_address() in limits_cached_dict['ip']['blacklist']:
-#             return jsonify({'message': 'Forbidden entry: IP is not allowed..'}), 429
-#         else:
-#             return f(*args, **kwargs)
-#     return ipfilter
-#
-#
-# def url_filter_decorator(f):
-#     @wraps(f)
-#     def ufilter(path, *args, **kwargs):
-#         print('SEBA3', request.url, path)
-#         if path in limits_cached_dict['path']['blacklist']:
-#             return jsonify({'message': 'Forbidden entry: desired url is not allowed..'}), 429
-#         else:
-#             return f(path, *args, **kwargs)
-#     return ufilter
-#
-
-# ####### MY ROUTER FUNCTION ################## #
+# ####### MY PROXY FUNCTION ################## #
 
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
 def proxy(path, *args, **kwargs):
-    # print('original url', request.url)
-    # print('destiny url', request.url.replace(request.host_url, 'https://' + _route))
     # TODO: add case for token limiter ¿?¿?¿?¿?
-    print('BODY??', request.get_data())
     # Check if mitigation has started for IP and URL
     token = request.headers.get('Authorization')
     if is_request_forbidden(path, request.remote_addr):
         return jsonify({'message': 'Forbidden entry. Rate limit exceeded'}), 429
     # Request allowed:
     else:
-
         # Send request to backend server
         resp = requests.request(
             method=request.method,
@@ -103,10 +49,11 @@ def proxy(path, *args, **kwargs):
             data=request.get_data(),
             cookies=request.cookies,
             allow_redirects=False)
-        # print('request.url', request.url) request.url http://localhost:8080/categories/MLA1112
-        # print('remote_addr', request.remote_addr, 'endpoint', request.endpoint) remote_addr 127.0.0.1 endpoint proxy
         # Prepare proxied response
         # excluded_headers = []
+        # The Content-Length header field MUST NOT be sent if these two lengths are different
+        # (i.e., if a Transfer-Encoding header field is present). If a message is received with
+        # both a Transfer-Encoding header field and a Content-Length header field, the latter MUST be ignored.
         excluded_headers = ['content-encoding', 'content-length', 'transfer-encoding', 'connection']
         headers = [(name, value) for (name, value) in resp.raw.headers.items()
                    if name.lower() not in excluded_headers]
@@ -121,11 +68,58 @@ def proxy(path, *args, **kwargs):
 
         return response
 # ############################################# #
-@app.route('/foo')
-def proxy2(*args, **kwargs):
+# ########### ROUTUING ######################## #
+api.add_resource(Filter,  '/filter')
+# app.add_resource(Filter,  '/filter/')
+
+
+@app.route('/get_stats')
+@security_wrapper
+def get_stats(*args, **kwargs):
     # Este anduvo..asiq podria setear y reetear filtros por aca
     # Tambien mandar estadisticas!
-    return jsonify({'message': 'Hola, esta ruta aclarada anda :)'}), 429
+    # Example log line:
+    # 190.191.147.145-+-200-+-[2019-05-21T19:59:28+00:00]-+-"GET /crops HTTP/1.1"-+-917-+-0.871-+-"https://...."-+-"172.31.0.170"
+    # access_log = '/var/log/nginx/access.log;'
+    # error_log = '/var/log/nginx/error.log;'
+
+    df = pd.DataFrame(columns=['remote_addr', 'status', 'stat_digit', 'time', 'req',
+                               'req_size', 'req_time', 'referer', 'server_addr'])
+    with open(excpetions_log_path, mode='r') as log:
+        for line in log:
+            try:
+                adr, stat, time, req, rq_sz, rq_t, ref, srv_adr = line.split(sep='-+-')
+                df.loc[len(df)] = [adr, int(stat), int(stat[0]),
+                                   time, req, float(rq_sz), float(rq_t), ref, srv_adr[:-1]]
+            # For last line empty --> results in a ValueError
+            except ValueError:
+                pass
+
+    successes = df.stat_digit[df.stat_digit.apply(lambda x: x is 2)]
+    client_errors = df.stat_digit[df.stat_digit.apply(lambda x: x is 4)]
+    server_errors = df.stat_digit[df.stat_digit.apply(lambda x: x is 5)]
+
+    total_req = len(df)
+
+    success_rate = (len(successes) / total_req) * 100
+    client_err_rate = (len(client_errors) / total_req) * 100
+    server_err_rate = (len(server_errors) / total_req) * 100
+
+    mean_request_time = df.req_time.mean()
+    number_of_req_slower_than_mean = len(df.req_time[df.req_time.apply(lambda x: x > mean_request_time)])
+    number_of_req_slower_than_500ms = len(df.req_time[df.req_time.apply(lambda x: x > 0.5)])
+
+    mean_req_size = df.req_size.mean()
+
+    return jsonify({'message': 'OK', 'data': {'n req slower than mean': number_of_req_slower_than_mean,
+                                              'n req slower than 500ms': number_of_req_slower_than_500ms,
+                                              'mean_proxy_time': mean_request_time,
+                                              'success rate (%)': success_rate,
+                                              'client errors rate (%)': client_err_rate,
+                                              'server errors rate (%)': server_err_rate,
+                                              'request analyzed': total_req,
+                                              'mean req size': mean_req_size,
+                                              }}), 429
 
 
 if __name__ == "__main__":

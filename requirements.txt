@@ -1,3 +1,5 @@
 flask
-flask-limiter
+# flask-limiter
 redis
+marshmallow
+pandas

@@ -1,164 +1,175 @@
 import time
 from functools import update_wrapper
-from flask import request, g
-import math
 
+from flask import request, g, jsonify
+from flask_restful import abort, Resource
+from marshmallow import Schema, fields
 from redis import Redis
-redis = Redis()
 
+redis = Redis()
+DEBUG = True
 # TODO: implement this first as a config.json then as a cached PUB-SUB event.
 CACHED_MITIGATIONS_IN_SERVER = dict()
 _DYNAMIC_FILTERS_BY_IP_AND_URL = True  # TODO: leave me in False!
-#
-# _limits = {'ip':
-#                {'blacklist': {'127.0.0.0': 0,
-#                               },
-#                 'default_values': []
-#                 },
-#            'path':
-#                {'blacklist': ['categories/MLA1112',
-#                              # 'categories/MLA1111',
-#                              ],
-#                 'default_values': []
-#                }
-#           }
-#
-#
-# class CachedLimits():
-#     def __init__(self):
-#         self.limits = _limits
 
-#
-#
-# class RateLimit(object):
-#
-#     # def __init__(self, key_prefix, limit, per, send_x_headers):
-#     #
-#     #     self.reset = (int(time.time()) // per) * per + per
-#     #     print('AAAAAA', self.reset)  # 1557848520  or 1558205310
-#     #     self.key = key_prefix + str(self.reset)
-#     #     self.limit = limit
-#     #     self.per = per
-#     #     self.send_x_headers = send_x_headers
-#     #     # print('CCCCC', self.send_x_headers)  # True
-#     #
-#     #     p = redis.pipeline()
-#     #     print('key', self.key)  # rate-limit/proxy/127.0.0.1/1557848520
-#     #
-#     #     # Increments the value of key by amount. If no key exists, the value will be initialized as  amount
-#     #     p.incr(self.key)
-#     #     # Set an expire flag on key name for time seconds. time can be represented by an integer or a Python
-#     #       # timedelta object.
-#     #     p.expireat(self.key, self.reset + self.expiration_window)
-#     #     b = p.execute()
-#     #     a = b[0]
-#     #     print('p.execute, b()[0]', a, b)  # p.execute, b()[0] 1 [1, True]
-#     #     # current atempts during this minute
-#     #     self.current = min(a, limit)
-#     #     print('current atempts', self.current)  # 2 cdo ya me bloquea
-#     #
-#     # remaining = property(lambda x: x.limit - x.current)
-#     # over_limit = property(lambda x: x.current >= x.limit)
-#     # # print('EEEEE', remaining, over_limit)  # <property object at 0x7f2704b419f8> <property object at 0x7f2704b41d18>
-#
-#     def __init__(self, url_key, ip_key, url_limit, ip_limit, per, send_x_headers):
-#         # I think key prefix could be the URL
-#         self.current_time = int(time.time())
-#         self.current_second = self.current_time % 60
-#         self.current_minute = math.floor(self.current_time / 60) % 60
-#         self.past_minute = self.current_minute - 1  # (self.current_minute + 59) % 60
-#         self.current_url_key = "url_count/" + url_key + '/' + str(self.current_minute)
-#         self.current_ip_key = "ip_count/" + ip_key + '/' + str(self.current_minute)
-#         self.past_url_key = "url_count/" + url_key + '/' + str(self.past_minute)
-#         self.past_ip_key = "ip_count/" + ip_key + '/' + str(self.past_minute)
-#
-#         self.send_x_headers = send_x_headers  # True
-#
-#         p = redis.pipeline()
-#         p.get(self.past_url_key)
-#         p.get(self.past_ip_key)
-#         # Increments the value of key by amount. If no key exists, the value will be initialized as  amount
-#         p.incr(self.past_url_key)
-#         p.incr(self.past_ip_key)
-#         # Set an expire flag on key name for time seconds
-#         p.expire(self.current_url_key,   120 - self.current_second)  # 2 minutes 1 for each window
-#         p.expire(self.current_ip_key,   120 - self.current_second)  # 2 minutes 1 for each window
-#         b = p.execute()
-#         # Get the actual window counter b[0] is counter from last minute
-#         a = b[1]
-#         print('AAAAAA', a, b)
-#         print('URL', self.current_url_key, self.past_url_key, self.current_second)
-#         print('IP', self.current_ip_key, self.past_ip_key, self.current_second)
-#         # current atempts during this minute
-#         self.url_current = b[2] - 1  # min(a, limit)
-#         self.ip_current = b[3] - 1  # min(a, limit)
-#         self.url_limit = url_limit  # min(a, limit)
-#         self.ip_limit = ip_limit  # min(a, limit)
-#
-#         self.past_url_counter = int(b[0]) if b[0] else 0
-#         self.past_ip_counter = int(b[1]) if b[1] else 0
-#         # current mean rate (number of request in 1 minute window)
-#         self.current_url_rate = int(self.past_url_counter * ((60 - (self.current_time % 60)) / 60) + self.url_current)
-#         self.current_ip_rate = int(self.past_ip_counter * ((60 - (self.current_time % 60)) / 60) + self.ip_current)
-#         print('CCCCCC', self.current_url_rate, self.past_url_counter, self.url_current, self.url_limit)
-#         print('DDDDDD', self.current_ip_rate, self.past_ip_counter, self.ip_current, self.ip_limit)
-#         # print('DDDDDD', self.limit, self.current_rate, self.current)
-#
-#     url_remaining = property(lambda x: x.url_limit - x.current_url_rate)
-#     ip_remaining = property(lambda x: x.ip_limit - x.current_ip_rate)
-#     url_over_limit = property(lambda x: x.current_url_rate >= x.url_limit)
-#     ip_over_limit = property(lambda x: x.current_ip_rate >= x.ip_limit)
-#     # print('EEEEE', remaining, over_limit)  # <property object at 0x7f2704b419f8> <property object at 0x7f2704b41d18>
-#
-#
-# def get_view_rate_limit():
-#     return getattr(g, '_view_rate_limit', None)
-#
-#
-# def url_on_over_limit(limit):
-#     return 'You hit the URL rate limit: {}'.format((limit.url_remaining, limit.url_over_limit)), 429
-#
-# # TODO: put responses more tidier and the same as filters!
-# def ip_on_over_limit(limit):
-#     return 'You hit the IP rate limit: {}'.format((limit.ip_remaining, limit.ip_over_limit)), 429
-#
-#
-# def ratelimit(url_limit, ip_limit, per=60, send_x_headers=True,
-#               url_over_limit=url_on_over_limit,
-#               ip_over_limit=ip_on_over_limit,
-#               scope_func=lambda: request.remote_addr,
-#               key_func=lambda: request.endpoint):
-#     def decorator(f):
-#         def rate_limited(path, *args, **kwargs):
-#             # key = 'rate-limit/%s/%s/' % (path, scope_func()) # (key_func(), scope_func())
-#             rlimit = RateLimit(path, scope_func(), url_limit, ip_limit, per, send_x_headers)
-#             g._view_rate_limit = rlimit
-#             if url_over_limit is not None and rlimit.url_over_limit:
-#                 return url_over_limit(rlimit)
-#             if ip_over_limit is not None and rlimit.ip_over_limit:
-#                 return ip_over_limit(rlimit)
-#             return f(path, *args, **kwargs)
-#         return update_wrapper(rate_limited, f)
-#     return decorator
 
-###########################################################################################################
-###########################################################################################################
-###########################################################################################################
-###########################################################################################################
-###########################################################################################################
-###########################################################################################################
-###########################################################################################################
-###########################################################################################################
-###########################################################################################################
-###########################################################################################################
-###########################################################################################################
-###########################################################################################################
-###########################################################################################################
-###########################################################################################################
-###########################################################################################################
-###########################################################################################################
-###########################################################################################################
-###########################################################################################################
+# validates the input with marshmallow
+def validate_input(schema, json_data):
+    try:
+        data, errors = schema.load(json_data)
+    except Exception as e:
+        abort(400, message=str('Validation error: {}'.format(e)))
+
+    if errors:
+        abort(400, message=str(errors))
+
+    return data
+
+
+def security_wrapper(f):
+    """
+    This method should check that the requester ID (user) is an Admin
+    or some kind of important role or user. So as to avoid that anyone
+    can apply filters to this reverse_proxy. However, this was left
+    unimplemented cause it was not the main part of the challenge
+    :param f: function or method to wrap with security check
+    :return: wrapped function
+    """
+    return f
+
+
+class FilterSchema(Schema):
+    filter_ip_tupple = fields.Dict()
+    filter_url_tupple = fields.Dict()
+    filter_url = fields.String()
+    filter_ip = fields.String()
+
+
+class Filter(Resource):
+
+    @security_wrapper
+    def get(self):
+        """
+        Get all applied filters in redis.
+        :return:
+        """
+        # curl -X GET  http://localhost:8080/filter
+        p = redis.pipeline()
+        p.keys(pattern='mitigate*')
+        b = p.execute()
+        print('\n' '\n' '\n' '\n' , b, '\n' '\n' '\n' '\n')
+        keys = list()
+        for key in b[0]:
+            ip = key.decode("utf-8").split(sep='mitigate/')[1]
+            keys.append(ip)
+        return {'message': 'OK', 'data': keys}, 200
+
+
+    @security_wrapper
+    def post(self):
+        """
+        :param filter_ip_tupple: <dict> of the remote address to apply mitigation. Sent in the request body data.
+        Not required. Eg: {"127.0.0.1": 0}. Key is the IP to ban, and value is the amount of time in
+        seconds to apply the filter. If 0 is given it will be applied forever.
+        :param filter_url_tupple: <dict> of the URL (after prefix URL "​api.mercadolibre.com/") to apply mitigation.
+        Sent in the request body data. Not required. Eg: {"categories/MLA1113": 0}
+        Key is the URL path to ban, and value is the amount of time in seconds to apply the filter. if 0 is given
+        it will be applied forever.
+        :return:
+        """
+        # curl -X POST  http://localhost:8080/filter -H "Content-Type: application/json" -d '{"filter_ip_tupple": {"fake_ip3": "100"}}'
+        # get json data from request
+        json_data = request.get_json()
+        if json_data is None:
+            return {"message": 'Missing required JSON arguments: filter_ip nor filter_url tupple was given'}, 400
+
+        filters_schema = FilterSchema()
+        filters_schema.fields['filter_ip_tupple'].required = False
+        filters_schema.fields['filter_url_tupple'].required = False
+
+        # validates the input coming from the request as json
+        data = validate_input(filters_schema, json_data)
+
+        ip_key, url_key = None, None
+
+        # extract variables
+        if data.get('filter_ip_tupple'):
+            ip_tuple = data['filter_ip_tupple'].popitem()
+            ip, ip_time = ip_tuple
+            ip_key = 'mitigate/ip/' + ip + '/'
+        if data.get('filter_url_tupple'):
+            url_tuple = data['filter_url_tupple'].popitem()
+            url, url_time = url_tuple
+            url_key = 'mitigate/url/' + url + '/'
+
+        if ip_key or url_key:
+
+            p = redis.pipeline()
+
+            if ip_key:
+                # Increments the value of key by 1
+                p.incr(ip_key)
+                # Set an expire flag on key name for time seconds
+                if int(ip_time) != 0:
+                    p.expire(ip_key, ip_time)
+
+            if url_key:
+                p.incr(url_key)
+                if int(url_time) != 0:
+                    p.expire(url_time, url_time)
+
+            b = p.execute()
+            # Get the actual window counter b[0] is counter from last minute
+
+        return {'message': 'OK'}, 200
+
+    @security_wrapper
+    def delete(self):
+        """
+        :param filter_ip_tupple: <dict> of the remote address to apply mitigation. Sent in the request body data.
+        Not required. Eg: {"127.0.0.1": "0"}. Key is the IP to ban, and value is the amount of time in
+        seconds to apply the filter. If 0 is given it will be applied forever.
+        :param filter_url_tupple: <dict> of the URL (after prefix URL "​api.mercadolibre.com/") to apply mitigation.
+        Sent in the request body data. Not required. Eg: {"categories/MLA1113": "0"}
+        Key is the URL path to ban, and value is the amount of time in seconds to apply the filter. if 0 is given
+        it will be applied forever.
+        :return:
+        """
+        # curl -X DELETE  http://localhost:8080/filter -H "Content-Type: application/json" -d '{"filter_ip": "fake_ip2"}'
+        # get json data from request
+        json_data = request.get_json()
+        if json_data is None:
+            return {"message": 'Missing required JSON arguments: filter_ip nor filter_url was given'}, 400
+
+        filters_schema = FilterSchema()
+        filters_schema.fields['filter_ip'].required = False
+        filters_schema.fields['filter_url'].required = False
+
+        # validates the input coming from the request as json
+        data = validate_input(filters_schema, json_data)
+
+        ip_key, url_key = None, None
+
+        # extract variables
+        if data.get('filter_ip'):
+            ip = data['filter_ip']
+            ip_key = 'mitigate/ip/' + ip + '/'
+        if data.get('filter_url'):
+            url = data['filter_url_tupple']
+            url_key = 'mitigate/url/' + url + '/'
+
+        if ip_key or url_key:
+
+            p = redis.pipeline()
+
+            if ip_key:
+                # Delete value of key
+                p.delete(ip_key)
+            if url_key:
+                p.delete(url_key)
+            b = p.execute()
+            # Get the actual window counter b[0] is counter from last minute
+        return {'message': 'OK'}, 200
 
 
 def is_request_forbidden(asked_url, remote_address, key_prefix='mitigate/'):
@@ -213,9 +224,10 @@ def get_actual_count_and_increment(url, ip, per, current_time):
     b = p.execute()
     # Get the actual window counter b[0] is counter from last minute
     a = b[1]
-    print('response from redis: ¿is mitigated?', a, b)
-    print('URL', current_url_key, past_url_key, current_second)
-    print('IP', current_ip_key, past_ip_key, current_second)
+    if DEBUG:
+        print('response from redis: ¿is mitigated?', a, b)
+        print('URL', current_url_key, past_url_key, current_second)
+        print('IP', current_ip_key, past_ip_key, current_second)
     # current atempts during this minute
     url_current = b[2] - 1  # min(a, limit)
     ip_current = b[3] - 1  # min(a, limit)
