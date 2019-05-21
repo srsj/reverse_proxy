@@ -1,0 +1,24 @@
+My logrotate file (/etc/logrotate.d/nginx) for my service looks like this:
+
+
+/var/log/nginx/*.log {
+  daily
+  missingok
+  copytruncate
+  rotate 10
+  compress
+  delaycompress
+  notifempty
+  sharedscripts
+  postrotate
+    /bin/bash /home/ubuntu/meli_challenge/app/utils/sync_rotated_file_to_s3.sh log.1
+  endscript
+}
+
+The upstart job config file (/etc/init/shutdown-hook.conf) should look something like this:
+
+description "run at shutdown"
+
+start on starting rc
+task
+exec /bin/bash /home/ubuntu/meli_challenge/app/utils/sync_rotated_file_to_s3.sh log

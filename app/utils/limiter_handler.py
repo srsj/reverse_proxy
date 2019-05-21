@@ -213,7 +213,7 @@ def get_actual_count_and_increment(url, ip, per, current_time):
     b = p.execute()
     # Get the actual window counter b[0] is counter from last minute
     a = b[1]
-    print('AAAAAA', a, b)
+    print('response from redis: ¿is mitigated?', a, b)
     print('URL', current_url_key, past_url_key, current_second)
     print('IP', current_ip_key, past_ip_key, current_second)
     # current atempts during this minute
@@ -256,9 +256,6 @@ def _counter_increment(url, ip, url_limit=3, ip_limit=10, per=60):
     # current mean rate (number of request in 1 minute window)
     current_url_rate = int(past_url_counter * ((60 - (current_time % 60)) / 60) + url_current)
     current_ip_rate = int(past_ip_counter * ((60 - (current_time % 60)) / 60) + ip_current)
-    print('CCCCCC', current_url_rate, past_url_counter, url_current, url_limit)
-    print('DDDDDD', current_ip_rate, past_ip_counter, ip_current, ip_limit)
-    # print('DDDDDD', self.limit, self.current_rate, self.current)
 
     if current_url_rate >= url_limit:
         set_mitigation('mitigate/url/' + url + '/', time_of_expiration(url_limit, url_current, past_url_counter, per))
@@ -267,8 +264,3 @@ def _counter_increment(url, ip, url_limit=3, ip_limit=10, per=60):
         set_mitigation('mitigate/ip/' + ip + '/', time_of_expiration(ip_limit, ip_current, past_ip_counter, per))
         print('Rate limit setted by IP')
 
-
-url_remaining = property(lambda x: x.url_limit - x.current_url_rate)
-ip_remaining = property(lambda x: x.ip_limit - x.current_ip_rate)
-url_over_limit = property(lambda x: x.current_url_rate >= x.url_limit)
-ip_over_limit = property(lambda x: x.current_ip_rate >= x.ip_limit)
