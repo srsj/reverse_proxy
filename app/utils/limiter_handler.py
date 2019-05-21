@@ -1,16 +1,16 @@
 import time
-from functools import update_wrapper
 
 from flask import request, g, jsonify
 from flask_restful import abort, Resource
 from marshmallow import Schema, fields
 from redis import Redis
 
+from app.config import default_configuration
+
 redis = Redis()
 DEBUG = True
-# TODO: implement this first as a config.json then as a cached PUB-SUB event.
-CACHED_MITIGATIONS_IN_SERVER = dict()
-_DYNAMIC_FILTERS_BY_IP_AND_URL = True  # TODO: leave me in False!
+
+CACHED_MITIGATIONS_IN_SERVER = default_configuration
 
 
 # validates the input with marshmallow
@@ -57,7 +57,6 @@ class Filter(Resource):
         p = redis.pipeline()
         p.keys(pattern='mitigate*')
         b = p.execute()
-        print('\n' '\n' '\n' '\n' , b, '\n' '\n' '\n' '\n')
         keys = list()
         for key in b[0]:
             ip = key.decode("utf-8").split(sep='mitigate/')[1]
@@ -112,11 +111,20 @@ class Filter(Resource):
                 # Set an expire flag on key name for time seconds
                 if int(ip_time) != 0:
                     p.expire(ip_key, ip_time)
+                    CACHED_MITIGATIONS_IN_SERVER[ip_key] = (ip_time)
+                else:
+                    # Set expiration time almost to infinity in local cache
+                    CACHED_MITIGATIONS_IN_SERVER[ip_key] = (time.time() + 10e10)
 
             if url_key:
                 p.incr(url_key)
                 if int(url_time) != 0:
                     p.expire(url_time, url_time)
+                    CACHED_MITIGATIONS_IN_SERVER[url_key] = (url_time)
+                else:
+                    # Set expiration time almost to infinity in local cache
+                    CACHED_MITIGATIONS_IN_SERVER[url_key] = (time.time() + 10e10)
+
 
             b = p.execute()
             # Get the actual window counter b[0] is counter from last minute
@@ -163,10 +171,18 @@ class Filter(Resource):
             p = redis.pipeline()
 
             if ip_key:
-                # Delete value of key
+                # Delete value of key of Redis Cluster
                 p.delete(ip_key)
+                if CACHED_MITIGATIONS_IN_SERVER.get(ip_key):
+                    # Delete value of key of Local cache
+                    CACHED_MITIGATIONS_IN_SERVER.pop(ip_key)
+
             if url_key:
+                # Delete value of key of Redis Cluster
                 p.delete(url_key)
+                if CACHED_MITIGATIONS_IN_SERVER.get(url_key):
+                    # Delete value of key of Local cache
+                    CACHED_MITIGATIONS_IN_SERVER.pop(url_key)
             b = p.execute()
             # Get the actual window counter b[0] is counter from last minute
         return {'message': 'OK'}, 200
@@ -184,20 +200,19 @@ def is_request_forbidden(asked_url, remote_address, key_prefix='mitigate/'):
         if now > cached_url_mitigation:
             CACHED_MITIGATIONS_IN_SERVER.pop(url_key)
         else:
-            print('Redis trip saved!!! ')
             return True
     if cached_ip_mitigation:
         if now > cached_ip_mitigation:
             CACHED_MITIGATIONS_IN_SERVER.pop(ip_key)
         else:
-            print('Redis trip saved!!! ')
             return True
 
     p = redis.pipeline()
     p.get(url_key)
     p.get(ip_key)
     b = p.execute()
-    print('request to redis: is mitigated?? ', b)
+    if DEBUG:
+        print('request to redis: is mitigated?? ', b, url_key, ip_key)
     return any(b)
 
 
@@ -216,18 +231,14 @@ def get_actual_count_and_increment(url, ip, per, current_time):
     p.get(past_url_key)
     p.get(past_ip_key)
     # Increments the value of key by amount. If no key exists, the value will be initialized as  amount
-    p.incr(past_url_key)
-    p.incr(past_ip_key)
+    p.incr(current_url_key)
+    p.incr(current_ip_key)
     # Set an expire flag on key name for time seconds
     p.expire(current_url_key, 2 * per - current_second)  # 2 minutes 1 for each window
     p.expire(current_ip_key, 2 * per - current_second)  # 2 minutes 1 for each window
     b = p.execute()
     # Get the actual window counter b[0] is counter from last minute
-    a = b[1]
-    if DEBUG:
-        print('response from redis: ¿is mitigated?', a, b)
-        print('URL', current_url_key, past_url_key, current_second)
-        print('IP', current_ip_key, past_ip_key, current_second)
+
     # current atempts during this minute
     url_current = b[2] - 1  # min(a, limit)
     ip_current = b[3] - 1  # min(a, limit)
@@ -235,7 +246,12 @@ def get_actual_count_and_increment(url, ip, per, current_time):
     past_url_counter = int(b[0]) if b[0] else 0
     past_ip_counter = int(b[1]) if b[1] else 0
 
-    return url_current, past_url_counter, ip_current , past_ip_counter
+    if DEBUG:
+        print('response from redis: ', b)
+        print('URL', current_url_key, past_url_key, url_current, past_url_counter)
+        print('IP', current_ip_key, past_ip_key, ip_current, past_ip_counter)
+
+    return url_current, past_url_counter, ip_current, past_ip_counter
 
 
 def set_mitigation(key_to_mitigate, expiration_duration):
@@ -250,14 +266,36 @@ def set_mitigation(key_to_mitigate, expiration_duration):
     CACHED_MITIGATIONS_IN_SERVER[key_to_mitigate] = (time.time() + expiration_duration)
 
 
-def time_of_expiration(limit, present_hits, previous_hits, period):
-    return period * (1 - (limit - present_hits) / previous_hits)
+def time_of_expiration(limit, present_hits, previous_hits, period, actual_time):
+    """
+    Calculate how much time (seconds) must pass before letting another request in
+    to comply with the limit imposed. Equation was calculated from original:
+    rate <= limit = previous hits * (% of the previous window being evaluated) + actual hits
+    (period - actual hits) / actual hits  <=  (limit - actual hits) / previous hits
+    :param limit: <int> Number of requests permitted
+    :param present_hits: <int> Number of request in the present window period
+    :param previous_hits: <int> Number of request in the past window period
+    :param period: <int> Period in seconds on which to look at
+    :return:
+    """
+    if previous_hits != 0:
+        print('Expiration time', period * (1 - (limit - present_hits) / previous_hits) - actual_time)
+        return period * (1 - (limit - present_hits) / previous_hits) - actual_time
+    else:
+        print('AIAAAAAAAAAAAAAAAAAAAAA', period - actual_time)
+        return period - actual_time
 
 
-def _counter_increment(url, ip, url_limit=3, ip_limit=10, per=60):
-    # TODO get limits from local memory ???
+def _counter_increment(url, ip, per=60):
+    url_limit = CACHED_MITIGATIONS_IN_SERVER.get(url) if CACHED_MITIGATIONS_IN_SERVER.get(url) else \
+        CACHED_MITIGATIONS_IN_SERVER['default_url']
+
+    ip_limit = CACHED_MITIGATIONS_IN_SERVER.get(ip) if CACHED_MITIGATIONS_IN_SERVER.get(ip) else \
+        CACHED_MITIGATIONS_IN_SERVER['default_ip']
+
     minute, second = time.strftime("%M,%s").split(',')
     current_time = int(second)
+    current_second = current_time % per
 
     url_current, past_url_counter, ip_current, past_ip_counter = get_actual_count_and_increment(url,
                                                                                                 ip,
@@ -270,9 +308,13 @@ def _counter_increment(url, ip, url_limit=3, ip_limit=10, per=60):
     current_ip_rate = int(past_ip_counter * ((60 - (current_time % 60)) / 60) + ip_current)
 
     if current_url_rate >= url_limit:
-        set_mitigation('mitigate/url/' + url + '/', time_of_expiration(url_limit, url_current, past_url_counter, per))
-        print('Rate limit setted by URL', 'mitigate/url/' + url + '/')
+        set_mitigation('mitigate/url/' + url + '/',
+                       time_of_expiration(url_limit, url_current, past_url_counter, per, current_second)
+                       )
+        print('Rate limit setted by URL. Current rate:', current_url_rate, 'Limit:', url_limit)
     if current_ip_rate >= ip_limit:
-        set_mitigation('mitigate/ip/' + ip + '/', time_of_expiration(ip_limit, ip_current, past_ip_counter, per))
-        print('Rate limit setted by IP')
+        set_mitigation('mitigate/ip/' + ip + '/',
+                       time_of_expiration(ip_limit, ip_current, past_ip_counter, per, current_second)
+                       )
+        print('Rate limit setted by IP. Current rate:', current_ip_rate, 'Limit:',  ip_limit)
 

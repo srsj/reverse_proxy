@@ -13,10 +13,7 @@ from flask_cors import CORS
 # Module Imports
 from app.utils.limiter_handler import is_request_forbidden, _counter_increment, Filter, security_wrapper
 
-_DEFAULT_LIMIT_TO_ALL_URLS = 10  # 60000 rpm (1000 req x s)
-_DEFAULT_LIMIT_TO_ALL_IP = 3  # 600 rpm (10 req x s)
 
-excpetions_log_path = '/home/ssanchez/Documents/temp/api_exceptions.log'
 # excpetions_log_path = '/home/ubuntu/log_api.log'
 
 # PROXIED_ROUTE
@@ -70,22 +67,20 @@ def proxy(path, *args, **kwargs):
 # ############################################# #
 # ########### ROUTUING ######################## #
 api.add_resource(Filter,  '/filter')
-# app.add_resource(Filter,  '/filter/')
 
 
 @app.route('/get_stats')
 @security_wrapper
 def get_stats(*args, **kwargs):
-    # Este anduvo..asiq podria setear y reetear filtros por aca
-    # Tambien mandar estadisticas!
     # Example log line:
     # 190.191.147.145-+-200-+-[2019-05-21T19:59:28+00:00]-+-"GET /crops HTTP/1.1"-+-917-+-0.871-+-"https://...."-+-"172.31.0.170"
-    # access_log = '/var/log/nginx/access.log;'
-    # error_log = '/var/log/nginx/error.log;'
+    access_log = '/var/log/nginx/access.log;'
+    # TODO: erase local exmaple!!!
+    access_log = '/home/ssanchez/Documents/temp/api_exceptions.log'
 
     df = pd.DataFrame(columns=['remote_addr', 'status', 'stat_digit', 'time', 'req',
                                'req_size', 'req_time', 'referer', 'server_addr'])
-    with open(excpetions_log_path, mode='r') as log:
+    with open(access_log, mode='r') as log:
         for line in log:
             try:
                 adr, stat, time, req, rq_sz, rq_t, ref, srv_adr = line.split(sep='-+-')
