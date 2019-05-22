@@ -188,70 +188,78 @@ class Filter(Resource):
         return {'message': 'OK'}, 200
 
 
-def is_request_forbidden(asked_url, remote_address, key_prefix='mitigate/'):
-    url_key = key_prefix + 'url/' + asked_url + '/'
-    ip_key = key_prefix + 'ip/' + remote_address + '/'
+def _is_request_forbidden(resource, resource_name, key_prefix='mitigate/'):
+    resource_key = key_prefix + resource_name + '/' + resource + '/'
 
-    cached_url_mitigation = CACHED_MITIGATIONS_IN_SERVER.get(url_key)
-    cached_ip_mitigation = CACHED_MITIGATIONS_IN_SERVER.get(ip_key)
+    cached_url_mitigation = CACHED_MITIGATIONS_IN_SERVER.get(resource_key)
+
     now = time.time()
-    # If limitation is in memory avoid doing the trip to Redis (to mitigate possible attacks)
     if cached_url_mitigation:
         if now > cached_url_mitigation:
-            CACHED_MITIGATIONS_IN_SERVER.pop(url_key)
+            CACHED_MITIGATIONS_IN_SERVER.pop(resource_key)
         else:
-            return True
-    if cached_ip_mitigation:
-        if now > cached_ip_mitigation:
-            CACHED_MITIGATIONS_IN_SERVER.pop(ip_key)
-        else:
-            return True
+            return True, resource_key
+
+
+def is_request_forbidden(asked_url, remote_address):
+    url_ip_asked = asked_url + '_' + remote_address
+
+    # Check local CACHE in server before going to Redis
+    url_forbidden,  url_key = _is_request_forbidden(asked_url, 'url')
+    ip_forbidden,  ip_key = _is_request_forbidden(remote_address, 'ip')
+    urlip_forbidden,  urlip_key = _is_request_forbidden(url_ip_asked, 'urlip')
+    # If any is forbidden
+    if url_forbidden or ip_forbidden or urlip_forbidden:
+        return True
 
     p = redis.pipeline()
     p.get(url_key)
     p.get(ip_key)
+    p.get(urlip_key)
     b = p.execute()
     if DEBUG:
-        print('request to redis: is mitigated?? ', b, url_key, ip_key)
+        print('request to redis: is mitigated?? ', b, url_key, ip_key, urlip_key)
     return any(b)
 
 
-def get_actual_count_and_increment(url, ip, per, current_time):
+def get_actual_count_and_increment(current_url_key, past_url_key,
+                                   current_ip_key, past_ip_key,
+                                   current_urlip_key, past_urlip_key,
+                                   current_time, per):
 
     current_second = current_time % per
-    current_minute = int(current_time / per) % per
-    past_minute = current_minute - 1
-
-    current_url_key = "url_count/" + url + '/' + str(current_minute)
-    current_ip_key = "ip_count/" + ip + '/' + str(current_minute)
-    past_url_key = "url_count/" + url + '/' + str(past_minute)
-    past_ip_key = "ip_count/" + ip + '/' + str(past_minute)
 
     p = redis.pipeline()
     p.get(past_url_key)
     p.get(past_ip_key)
+    p.get(past_urlip_key)
     # Increments the value of key by amount. If no key exists, the value will be initialized as  amount
     p.incr(current_url_key)
     p.incr(current_ip_key)
+    p.incr(current_urlip_key)
     # Set an expire flag on key name for time seconds
     p.expire(current_url_key, 2 * per - current_second)  # 2 minutes 1 for each window
     p.expire(current_ip_key, 2 * per - current_second)  # 2 minutes 1 for each window
+    p.expire(current_urlip_key, 2 * per - current_second)  # 2 minutes 1 for each window
     b = p.execute()
     # Get the actual window counter b[0] is counter from last minute
 
     # current atempts during this minute
-    url_current = b[2] - 1  # min(a, limit)
-    ip_current = b[3] - 1  # min(a, limit)
+    url_current = b[3] - 1
+    ip_current = b[4] - 1
+    urlip_current = b[5] - 1
 
     past_url_counter = int(b[0]) if b[0] else 0
     past_ip_counter = int(b[1]) if b[1] else 0
+    past_urlip_counter = int(b[2]) if b[1] else 0
 
     if DEBUG:
         print('response from redis: ', b)
         print('URL', current_url_key, past_url_key, url_current, past_url_counter)
         print('IP', current_ip_key, past_ip_key, ip_current, past_ip_counter)
+        print('URLIP', current_urlip_key, past_urlip_key, urlip_current, past_urlip_counter)
 
-    return url_current, past_url_counter, ip_current, past_ip_counter
+    return url_current, past_url_counter, ip_current, past_ip_counter, urlip_current, past_urlip_counter
 
 
 def set_mitigation(key_to_mitigate, expiration_duration):
@@ -282,30 +290,36 @@ def time_of_expiration(limit, present_hits, previous_hits, period, actual_time):
         print('Expiration time', period * (1 - (limit - present_hits) / previous_hits) - actual_time)
         return period * (1 - (limit - present_hits) / previous_hits) - actual_time
     else:
-        print('AIAAAAAAAAAAAAAAAAAAAAA', period - actual_time)
         return period - actual_time
 
 
 def _counter_increment(url, ip, per=60):
-    url_limit = CACHED_MITIGATIONS_IN_SERVER.get(url) if CACHED_MITIGATIONS_IN_SERVER.get(url) else \
-        CACHED_MITIGATIONS_IN_SERVER['default_url']
+    # url_limit = CACHED_MITIGATIONS_IN_SERVER.get(url) if CACHED_MITIGATIONS_IN_SERVER.get(url) else \
+    #     CACHED_MITIGATIONS_IN_SERVER['default_url']
+    #
+    # ip_limit = CACHED_MITIGATIONS_IN_SERVER.get(ip) if CACHED_MITIGATIONS_IN_SERVER.get(ip) else \
+    #     CACHED_MITIGATIONS_IN_SERVER['default_ip']
 
-    ip_limit = CACHED_MITIGATIONS_IN_SERVER.get(ip) if CACHED_MITIGATIONS_IN_SERVER.get(ip) else \
-        CACHED_MITIGATIONS_IN_SERVER['default_ip']
+    # minute, second = time.strftime("%M,%s").split(',')
+    # current_time = int(second)
+    # current_second = current_time % per
 
-    minute, second = time.strftime("%M,%s").split(',')
-    current_time = int(second)
-    current_second = current_time % per
+    current_url_key, past_url_key, url_limit, current_second, current_time = aux_counter_increment(url, 'url', per)
+    current_ip_key, past_ip_key, ip_limit, _, _ = aux_counter_increment(url, 'url', per)
+    current_urlip_key, past_urlip_key, urlip_limit, _, _ = aux_counter_increment(url, 'urlip', per)
 
-    url_current, past_url_counter, ip_current, past_ip_counter = get_actual_count_and_increment(url,
-                                                                                                ip,
-                                                                                                per,
-                                                                                                current_time
-                                                                                                )
+    url_current, past_url_counter,\
+    ip_current, past_ip_counter, \
+    urlip_current, past_urlip_counter = get_actual_count_and_increment(
+        current_url_key,past_url_key,
+        current_ip_key,past_ip_key,
+        current_urlip_key, past_urlip_key,
+        current_time, per)
 
     # current mean rate (number of request in 1 minute window)
     current_url_rate = int(past_url_counter * ((60 - (current_time % 60)) / 60) + url_current)
     current_ip_rate = int(past_ip_counter * ((60 - (current_time % 60)) / 60) + ip_current)
+    current_urlip_rate = int(past_urlip_counter * ((60 - (current_time % 60)) / 60) + urlip_current)
 
     if current_url_rate >= url_limit:
         set_mitigation('mitigate/url/' + url + '/',
@@ -318,3 +332,24 @@ def _counter_increment(url, ip, per=60):
                        )
         print('Rate limit setted by IP. Current rate:', current_ip_rate, 'Limit:',  ip_limit)
 
+    if current_urlip_rate >= urlip_limit:
+        set_mitigation('mitigate/urlip/' + url + '_' + ip + '/',
+                       time_of_expiration(urlip_limit, urlip_current, past_urlip_counter, per, current_second)
+                       )
+        print('Rate limit setted by URL+IP. Current rate:', current_urlip_rate, 'Limit:',  urlip_limit)
+
+
+def aux_counter_increment(resource, resource_name, per):
+    resource_limit = CACHED_MITIGATIONS_IN_SERVER.get(resource) if CACHED_MITIGATIONS_IN_SERVER.get(resource) else \
+        CACHED_MITIGATIONS_IN_SERVER['default_' + resource_name]
+
+    current_minute, unix_second = time.strftime("%M,%s").split(',')
+    current_time = int(unix_second)
+    # With another period given this can be WINDOW instead of minute
+    current_second = current_time % per
+    past_minute = int(current_minute) - 1 if int(current_minute)!=0 else 59
+
+    current_resource_key = resource_name + "_count/" + resource + '/' + str(current_minute)
+    past_resource_key = resource_name + "_count/" + resource + '/' + str(past_minute)
+
+    return current_resource_key, past_resource_key, resource_limit, current_second, current_time
