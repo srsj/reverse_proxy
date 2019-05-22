@@ -1,6 +1,6 @@
-_DEFAULT_LIMIT_TO_ALL_URLS = 5  # if DEBUG else 60000  # rpm (1000 req x s)
-_DEFAULT_LIMIT_TO_ALLL_IP = 10  # if DEBUG else 600  # rpm (10 req x s)
-_DEFAULT_LIMIT_TO_ALLL_URLIP = 3  # if DEBUG else 300  # rpm (10 req+IP x s)
+_DEFAULT_LIMIT_TO_ALL_URLS = 60000  # rpm (1000 req x s)
+_DEFAULT_LIMIT_TO_ALLL_IP = 600  # rpm (10 req x s)
+_DEFAULT_LIMIT_TO_ALLL_URLIP = 120  # rpm (2 req+IP x s)
 
 # Here we should add limits to certain IP's or URL. This should be defined by someone
 # If it was not configured in advanced, a PUB SUB should be implemented here so that

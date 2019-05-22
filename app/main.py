@@ -14,8 +14,6 @@ from flask_cors import CORS
 from app.utils.limiter_handler import is_request_forbidden, _counter_increment, Filter, security_wrapper
 
 
-# excpetions_log_path = '/home/ubuntu/log_api.log'
-
 # PROXIED_ROUTE
 _route = '​api.mercadolibre.com/'
 
@@ -76,8 +74,6 @@ def get_stats(*args, **kwargs):
     # Example log line:
     # 190.191.147.145-+-200-+-[2019-05-21T19:59:28+00:00]-+-"GET /crops HTTP/1.1"-+-917-+-0.871-+-"https://...."-+-"172.31.0.170"
     access_log = '/var/log/nginx/access.log;'
-    # TODO: erase local exmaple!!!
-    access_log = '/home/ssanchez/Documents/temp/api_exceptions.log'
 
     df = pd.DataFrame(columns=['original_ip', 'status', 'stat_digit', 'time', 'req',
                                'req_size', 'resp_size', 'req_time', 'referer', 'server_addr', 'remote_addr'])

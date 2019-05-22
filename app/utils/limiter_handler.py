@@ -1,6 +1,6 @@
 import time
 
-from flask import request, g, jsonify
+from flask import request
 from flask_restful import abort, Resource
 from marshmallow import Schema, fields
 from redis import Redis
@@ -8,7 +8,7 @@ from redis import Redis
 from app.config import default_configuration
 
 redis = Redis()
-DEBUG = True
+DEBUG = False
 
 CACHED_MITIGATIONS_IN_SERVER = default_configuration
 
@@ -191,8 +191,6 @@ class Filter(Resource):
 def _is_request_forbidden(resource, resource_name, key_prefix='mitigate/'):
     resource_key = key_prefix + resource_name + '/' + resource + '/'
     cached_url_mitigation = CACHED_MITIGATIONS_IN_SERVER.get(resource_key)
-    # if cached_url_mitigation is None:
-    #     cached_url_mitigation = CACHED_MITIGATIONS_IN_SERVER.get('default_' + resource_name)
 
     now = time.time()
     if cached_url_mitigation:
@@ -298,15 +296,6 @@ def time_of_expiration(limit, present_hits, previous_hits, period, actual_time):
 
 
 def _counter_increment(url, ip, per=60):
-    # url_limit = CACHED_MITIGATIONS_IN_SERVER.get(url) if CACHED_MITIGATIONS_IN_SERVER.get(url) else \
-    #     CACHED_MITIGATIONS_IN_SERVER['default_url']
-    #
-    # ip_limit = CACHED_MITIGATIONS_IN_SERVER.get(ip) if CACHED_MITIGATIONS_IN_SERVER.get(ip) else \
-    #     CACHED_MITIGATIONS_IN_SERVER['default_ip']
-
-    # minute, second = time.strftime("%M,%s").split(',')
-    # current_time = int(second)
-    # current_second = current_time % per
 
     current_url_key, past_url_key, url_limit, current_second, current_time = aux_counter_increment(url, 'url', per)
     current_ip_key, past_ip_key, ip_limit, _, _ = aux_counter_increment(url, 'url', per)
