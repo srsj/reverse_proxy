@@ -190,15 +190,19 @@ class Filter(Resource):
 
 def _is_request_forbidden(resource, resource_name, key_prefix='mitigate/'):
     resource_key = key_prefix + resource_name + '/' + resource + '/'
-
     cached_url_mitigation = CACHED_MITIGATIONS_IN_SERVER.get(resource_key)
+    # if cached_url_mitigation is None:
+    #     cached_url_mitigation = CACHED_MITIGATIONS_IN_SERVER.get('default_' + resource_name)
 
     now = time.time()
     if cached_url_mitigation:
         if now > cached_url_mitigation:
             CACHED_MITIGATIONS_IN_SERVER.pop(resource_key)
+            return False, resource_key
         else:
             return True, resource_key
+    else:
+        return False, resource_key
 
 
 def is_request_forbidden(asked_url, remote_address):

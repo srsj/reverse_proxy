@@ -8,6 +8,6 @@ _DEFAULT_LIMIT_TO_ALLL_URLIP = 3  # if DEBUG else 300  # rpm (10 req+IP x s)
 # for a specific URL or specific IP we should update this dict.
 # To add a limit for a IP (1.2.3.4) Eg: default_configuration['1.2.3.4'] = my_desired_limit
 default_configuration = {'default_url': _DEFAULT_LIMIT_TO_ALL_URLS,
-                         'default_ip': _DEFAULT_LIMIT_TO_ALL_IP,
-                         'default_urlip': _DEFAULT_LIMIT_TO_ALL_IP
+                         'default_ip': _DEFAULT_LIMIT_TO_ALLL_IP,
+                         'default_urlip': _DEFAULT_LIMIT_TO_ALLL_URLIP
                          }

@@ -38,6 +38,7 @@ def proxy(path, *args, **kwargs):
         return jsonify({'message': 'Forbidden entry. Rate limit exceeded'}), 429
     # Request allowed:
     else:
+
         # Send request to backend server
         resp = requests.request(
             method=request.method,
@@ -78,8 +79,8 @@ def get_stats(*args, **kwargs):
     # TODO: erase local exmaple!!!
     access_log = '/home/ssanchez/Documents/temp/api_exceptions.log'
 
-    df = pd.DataFrame(columns=['remote_addr', 'status', 'stat_digit', 'time', 'req',
-                               'req_size', 'req_time', 'referer', 'server_addr'])
+    df = pd.DataFrame(columns=['original_ip', 'status', 'stat_digit', 'time', 'req',
+                               'req_size', 'resp_size', 'req_time', 'referer', 'server_addr', 'remote_addr'])
     with open(access_log, mode='r') as log:
         for line in log:
             try:
@@ -105,6 +106,7 @@ def get_stats(*args, **kwargs):
     number_of_req_slower_than_500ms = len(df.req_time[df.req_time.apply(lambda x: x > 0.5)])
 
     mean_req_size = df.req_size.mean()
+    mean_response_size = df.resp_size.mean()
 
     return jsonify({'message': 'OK', 'data': {'n req slower than mean': number_of_req_slower_than_mean,
                                               'n req slower than 500ms': number_of_req_slower_than_500ms,
@@ -114,6 +116,7 @@ def get_stats(*args, **kwargs):
                                               'server errors rate (%)': server_err_rate,
                                               'request analyzed': total_req,
                                               'mean req size': mean_req_size,
+                                              'mean response size': mean_response_size,
                                               }}), 429
 
 
