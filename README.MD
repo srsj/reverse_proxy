@@ -53,5 +53,5 @@ We can use Logstash and Python programs (Flask) to parse the raw log data and pi
 
 Example from access.log of Nginx:
 
-190.191.147.145-+-200-+-[2019-05-22T14:43:52+00:00]-+-"GET /crops HTTP/1.1"-+-875-+-0.052-+-"https://web-sandbox.eiwa.ag/"-+-"172.31.0.170"
+190.191.147.123-+-200-+-[2019-05-22T14:43:52+00:00]-+-"GET /test:endpoint HTTP/1.1"-+-875-+-0.052-+-"https://web-test.testing.com/"-+-"172.31.0.170"
 
